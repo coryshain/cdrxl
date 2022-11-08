@@ -8,8 +8,8 @@ from cdrxl.util import stderr
 from cdrxl.config import Config
 
 class CDRXL:
-    STATE_ATTRIBUTES = [x for x in Config.CDRXL_KWARGS] + \
-        [
+    KWARG_ATTRIBUTES = [x for x in Config.CDRXL_KWARGS]
+    FIXED_ATTRIBUTES = [
             'n_output',
             'n_pred',
             'rangf',
@@ -18,9 +18,12 @@ class CDRXL:
             'X_mean',
             'X_sd',
             'X_time_mean',
-            'X_time_sd',
-            'epoch'
+            'X_time_sd'
         ]
+    MUTABLE_ATTRIBUTES = [
+        'epoch'
+    ]
+    STATE_ATTRIBUTES = KWARG_ATTRIBUTES + FIXED_ATTRIBUTES + MUTABLE_ATTRIBUTES
 
     def __init__(
             self,
@@ -45,7 +48,7 @@ class CDRXL:
         self.built = False
         self.model = self.get_model()
 
-        self.load()
+        self.load_weights()
 
         self.model.summary()
 
@@ -135,7 +138,7 @@ class CDRXL:
             else:
                 _inputs = inputs
 
-            irf = tf.keras.layers.Concatenate()([_inputs, t_delta] + ran_embd)
+            irf = tf.keras.layers.Concatenate()([_inputs, t_delta] + ran_embd)  # B x T x F
 
             if self.resnet:
                 L = tf.keras.layers.Dense(
@@ -302,9 +305,12 @@ class CDRXL:
             zero_grads = [tf.zeros_like(w) for w in grad_vars]
             self.model.optimizer.apply_gradients(zip(zero_grads, grad_vars))
             self.model.optimizer.set_weights(m_tmp.optimizer.get_weights())
+            # for attr in self.MUTABLE_ATTRIBUTES:
+            #     setattr(self, attr, getattr(m_tmp, attr))
+            if path is not None:
+                self.outdir = path
         else:
             stderr('No checkpoint to load. Keeping initialization...\n')
-
 
     def set_epoch(self, epoch):
         self.epoch = epoch
