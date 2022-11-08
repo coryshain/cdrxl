@@ -13,6 +13,7 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
             Y_time=None,
             series_ids=None,
             rangf=None,
+            rangf_map=None,
             batch_size=128,
             shuffle=True,
             n_backward=32,
@@ -67,7 +68,7 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
         X = X.sort_values(series_ids + ['time'])
         Y = Y.sort_values(series_ids + ['time'])
 
-        self.X = X[self.predictor_columns]
+        self.X = X[self.predictor_columns].fillna(0.)
         self.X_time = X[['time'] + self.series_ids]
         if self.has_Y:
             self.Y = Y[self.response_columns]
@@ -81,6 +82,12 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
         self.X_time_src = self.X_time
         self.Y_time_src = self.Y_time
 
+        if rangf_map is None:
+            self.rangf_map = {}
+            for rangf in self.rangf:
+                self.rangf_map[rangf] = {x: i for i, x in enumerate(sorted(list(self.ran[rangf].unique())))}
+        else:
+            self.rangf_map = rangf_map
         if X_mean is None:
             self.X_mean = self.X.values.mean(axis=0)
         else:
@@ -115,49 +122,6 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
         self.set_idx()
         self.compute_windows()
 
-    def compute_windows(self):
-        W = self.Y_time.groupby(self.series_ids).apply(self._compute_windows).squeeze()
-        W = pd.DataFrame(W.to_list(), columns=['start', 'end'])
-        self.Y_time['start'] = W.start.values
-        self.Y_time['end'] = W.end.values
-
-    def _compute_windows(self, Y_time):
-        series_id = tuple(Y_time[self.series_ids].values[0])
-        Y_time = Y_time.time.values
-        series_id = {x: series_id[i] for i, x in enumerate(self.series_ids)}
-        sel = np.ones(len(self.X_time), dtype=bool)
-        for x in self.series_ids:
-            sel &= self.X_time[x] == series_id[x]
-        X_time = self.X_time[sel]
-        X_ix = np.array(X_time.index)
-        X_time = X_time.time.values
-
-        B = self.n_backward
-        F = self.n_forward
-        i = 0
-        j = 0
-
-        bound = []
-
-        while len(bound) < len(Y_time):
-            _X_time = X_time[i]
-            _Y_time = Y_time[j]
-            while _X_time <= _Y_time:
-                if i < len(X_time):
-                    i += 1
-                    _X_time = X_time[i]
-            if i < len(X_time):
-                s = X_ix[max(0, i - B)]
-                e = X_ix[min(len(X_ix) - 1, i + F)]
-            else:
-                s = len(X_ix)
-                e = len(X_ix)
-            bound.append((s, e))
-
-            j += 1
-
-        return pd.Series(bound)
-
     def __len__(self):
         return math.ceil(len(self.Y_time) / self.batch_size)
 
@@ -179,29 +143,92 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
             X_time[i, ix:] = self.X_time.time.iloc[s:e]
             X_mask[i, ix:] = 1
 
-        # if self.center_X:
-        #     X = X - self.X_mean[None, None, ...]
-        #     X = X * X_mask[..., None]
-        # if self.rescale_X:
-        #     X = X / (self.X_sd[None, None, ...] + 1e-8)
-        # if self.center_X_time:
-        #     X_time = X_time - self.X_time_mean
-        #     X_time = X_time * X_mask
-        # if self.rescale_X_time:
-        #     X_time = X_time / (self.X_time_sd + 1e-8)
-
         if self.has_Y:
             Y = self.Y.iloc[indices]
         else:
             Y = None
-        rangf = self.ran.iloc[indices].values
+        ran_src = self.ran.iloc[indices]
+        ran = []
+        rangf_n_levels = self.rangf_n_levels
+        for rangf in self.rangf:
+            _ran = np.zeros((len(ran_src), rangf_n_levels[rangf]))
+            _ranix = ran_src[rangf].map(lambda x, gf=rangf: self.rangf_map[gf].get(x, -1))
+            offset = np.where(_ranix >= 0, np.ones(len(_ranix)) ,np.zeros(len(_ranix)))
+            _ran[np.arange(len(_ranix)), _ranix] = offset
+            _ran = np.tile(tf.expand_dims(_ran, axis=-2), [1, self.n_backward + self.n_forward, 1])
+            ran.append(_ran)
 
-        t_delta = Y_time[..., None] - X_time
-        # X_temp = np.stack([X_time, t_delta], axis=-1)
         X_temp = X_time[..., None]
         X = np.concatenate([X, X_temp], axis=-1)
 
-        return (X, X_mask, t_delta[..., None]), Y
+        return (X, X_mask, X_time, Y_time, ran), Y
+
+    @property
+    def n(self):
+        return len(self.Y)
+
+    @property
+    def n_pred(self):
+        return len(self.predictor_columns) + 1
+
+    @property
+    def n_output(self):
+        return len(self.response_columns)
+
+    @property
+    def mean_var(self):
+        return np.square(np.std(self.Y.values, axis=0)).mean()
+
+    @property
+    def rangf_n_levels(self):
+        return {x: self.ran[x].nunique() for x in self.rangf}
+
+    def compute_windows(self):
+        W = self.Y_time.groupby(self.series_ids).apply(self._compute_windows).squeeze()
+        W = pd.DataFrame(W.to_list(), columns=['start', 'end'])
+        self.Y_time['start'] = W.start.values
+        self.Y_time['end'] = W.end.values
+
+    def _compute_windows(self, Y_time):
+        Y_time_src = Y_time
+        series_id = tuple(Y_time[self.series_ids].values[0])
+        Y_time = Y_time.time.values
+        series_id = {x: series_id[i] for i, x in enumerate(self.series_ids)}
+        sel = np.ones(len(self.X_time), dtype=bool)
+        for x in self.series_ids:
+            sel &= self.X_time[x] == series_id[x]
+        X_time = self.X_time[sel]
+        X_time_src = X_time
+        X_ix = np.array(X_time.index)
+        X_time = X_time.time.values
+
+        B = self.n_backward
+        F = self.n_forward
+        i = 0
+        j = 0
+
+        bound = []
+
+        while len(bound) < len(Y_time):
+            _X_time = X_time[i]
+            _Y_time = Y_time[j]
+            while _X_time <= _Y_time:
+                if i < len(X_time):
+                    i += 1
+                    _X_time = X_time[i]
+            s_ix = max(0, i - B + 1)         # Don't go below 0
+            s_ix = min(len(X_ix) - 1, s_ix)  # Don't go past series length
+            e_ix = max(0, i + F)             # Don't go below 0
+            e_ix = min(len(X_ix) - 1, e_ix)  # Don't go past series length
+            s = X_ix[s_ix]
+            e = X_ix[e_ix] + 1
+            assert e - s >= 0, 'End was before start: %s' % Y_time_src.iloc[i]
+            assert e - s <= B + F, 'Chunk length too long: %s' % Y_time_src.iloc[i]
+            bound.append((s, e))
+
+            j += 1
+
+        return pd.Series(bound)
 
     def on_epoch_end(self):
         self.set_idx()
@@ -212,14 +239,6 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
             ix = np.random.permutation(ix)
         self.ix = ix
 
-    def n_pred(self):
-        return len(self.predictor_columns) + 1
-
-    def n_output(self):
-        return len(self.response_columns)
-
-    def mean_var(self):
-        return np.square(np.std(self.Y.values, axis=0)).mean()
 
 
 def load_data(

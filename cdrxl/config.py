@@ -12,14 +12,12 @@ class Config:
         'n_forward': 0,
         'n_units_irf': 128,
         'n_layers_irf': 1,
-        'n_units_ff': 128,
-        'irf_by_predictor': True,
-        'n_layers_ff': 0,
         'batch_normalize': False,
         'layer_normalize': False,
         'resnet': False,
         'dropout_rate': 0,
         'regularizer_scale': 0,
+        'filter_regularizer_scale': 0,
         'learning_rate': 0.001,
         'batch_size': 256,
         'n_iter': 10000,
@@ -41,20 +39,19 @@ class Config:
         self.series_ids = config.get('series_ids', None)
         self.predictor_columns = config.get('predictor_columns', None)
         self.response_columns = config.get('response_columns', None)
+        self.rangf_columns = config.get('rangf_columns', None)
 
         self.outdir = config.get('outdir', Config.CDRXL_KWARGS['outdir'])
         self.n_backward = config.get('n_backward', Config.CDRXL_KWARGS['n_backward'])
         self.n_forward = config.get('n_forward', Config.CDRXL_KWARGS['n_forward'])
         self.n_units_irf = config.get('n_units_irf', Config.CDRXL_KWARGS['n_units_irf'])
         self.n_layers_irf = config.get('n_layers_irf', Config.CDRXL_KWARGS['n_layers_irf'])
-        self.irf_by_predictor = config.get('irf_by_predictor', Config.CDRXL_KWARGS['irf_by_predictor'])
-        self.n_units_ff = config.get('n_units_ff', Config.CDRXL_KWARGS['n_units_ff'])
-        self.n_layers_ff = config.get('n_layers_ff', Config.CDRXL_KWARGS['n_layers_ff'])
         self.batch_normalize = config.get('batch_normalize', Config.CDRXL_KWARGS['batch_normalize'])
         self.layer_normalize = config.get('layer_normalize', Config.CDRXL_KWARGS['layer_normalize'])
         self.resnet = config.get('resnet', Config.CDRXL_KWARGS['resnet'])
         self.dropout_rate = config.get('dropout_rate', Config.CDRXL_KWARGS['dropout_rate'])
         self.regularizer_scale = config.get('regularizer_scale', Config.CDRXL_KWARGS['regularizer_scale'])
+        self.filter_regularizer_scale = config.get('filter_regularizer_scale', Config.CDRXL_KWARGS['filter_regularizer_scale'])
         self.learning_rate = config.get('learning_rate', Config.CDRXL_KWARGS['learning_rate'])
         self.batch_size = config.get('batch_size', Config.CDRXL_KWARGS['batch_size'])
         self.n_iter = config.get('n_iter', Config.CDRXL_KWARGS['n_iter'])
