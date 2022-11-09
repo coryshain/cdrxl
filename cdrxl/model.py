@@ -297,8 +297,11 @@ class CDRXL:
                 self.outdir = path
             self.build()
             self.load_weights(path=path)
+        elif not self.built:
+            stderr('No saved model to load. Initializing new model.')
+            self.build()
         else:
-            stderr('No saved model to load. Keeping initialization.')
+            stderr('No saved model to load. Keeping current weights.')
 
     def load_weights(self, path=None):
         if path is None:
