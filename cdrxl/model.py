@@ -46,9 +46,7 @@ class CDRXL:
         self.epoch = 0
 
         self.built = False
-        self.model = self.get_model()
-
-        self.load_weights()
+        self.load()
 
         self.model.summary()
 
@@ -60,9 +58,11 @@ class CDRXL:
             setattr(self, x, state[x])
 
         self.built = False
-        if not hasattr(self, 'model'):
-            self.model = self.get_model()
-            self.load_weights()
+        self.model = None
+
+    def __call__(self, inputs):
+        assert self.built, "Model not yet initialized, cannot be called on data. First run model.build() or model.load()."
+        return self.model(inputs)
 
     @property
     def model_dir(self):
@@ -76,172 +76,176 @@ class CDRXL:
     def weights_path(self):
         return os.path.join(self.model_dir, 'm.hdf5')
 
+    @property
+    def weights(self):
+        return self.model.weights
+
     def get_model(self):
         n_pred = self.n_pred
-        if not self.built:
-            if self.regularizer_scale:
-                weight_regularizer = tf.keras.regularizers.L2(self.regularizer_scale)
-            else:
-                weight_regularizer = None
-            if self.filter_regularizer_scale:
-                filter_regularizer = tf.keras.regularizers.L1(self.filter_regularizer_scale)
-            else:
-                filter_regularizer = None
+        if self.regularizer_scale:
+            weight_regularizer = tf.keras.regularizers.L2(self.regularizer_scale)
+        else:
+            weight_regularizer = None
+        if self.filter_regularizer_scale:
+            filter_regularizer = tf.keras.regularizers.L1(self.filter_regularizer_scale)
+        else:
+            filter_regularizer = None
 
-            inputs = tf.keras.Input(
-                shape=[None, n_pred],
-                name='X'
-            )
-            input_mask = tf.keras.Input(
-                shape=[None],
-                name='X_mask'
-            )
-            X_time = tf.keras.Input(
-                shape=[None],
-                name='X_time'
-            )
-            Y_time = tf.keras.Input(
-                shape=[],
-                name='Y_time'
-            )
+        inputs = tf.keras.Input(
+            shape=[None, n_pred],
+            name='X'
+        )
+        input_mask = tf.keras.Input(
+            shape=[None],
+            name='X_mask'
+        )
+        X_time = tf.keras.Input(
+            shape=[None],
+            name='X_time'
+        )
+        Y_time = tf.keras.Input(
+            shape=[],
+            name='Y_time'
+        )
 
-            ran = []
-            ran_embd = []
-            for rangf in self.rangf:
-                _ran = tf.keras.Input(
-                    shape=[None, self.rangf_n_levels[rangf]],
-                    name='ran_%s' % rangf
+        ran = []
+        ran_embd = []
+        for rangf in self.rangf:
+            _ran = tf.keras.Input(
+                shape=[None, self.rangf_n_levels[rangf]],
+                name='ran_%s' % rangf
+            )
+            ran.append(_ran)
+            L = tf.keras.layers.Dense(
+                self.n_units_irf,
+                activation=None,
+                kernel_regularizer=weight_regularizer,
+                name='ran_embedding_layer_%s' % rangf
+            )
+            ran_embd.append(L(_ran))
+
+        t_delta = (Y_time[..., None] - X_time)[..., None]
+
+        if self.filter_regularizer_scale:
+            # Conv1D with equal # filters and groups is a hack to apply trainable hadamard filter
+            filter = tf.keras.layers.Conv1D(
+                n_pred,
+                1,
+                padding='same',
+                groups=n_pred,
+                use_bias=False,
+                kernel_regularizer=filter_regularizer
+            )
+            _inputs = filter(inputs)
+
+        else:
+            _inputs = inputs
+
+        irf = tf.keras.layers.Concatenate()([_inputs, t_delta] + ran_embd)  # B x T x F
+
+        if self.resnet:
+            L = tf.keras.layers.Dense(
+                self.n_units_irf,
+                activation=None,
+                kernel_regularizer=weight_regularizer,
+                name='IRF_layer_preresnet'
+            )
+            irf = L(irf)
+
+            if self.batch_normalize:
+                L = tf.keras.layers.BatchNormalization(name='IRF_BN_preresnet')
+                irf = L(irf)
+
+            if self.layer_normalize:
+                L = tf.keras.layers.LayerNormalization(name='IRF_LN_preresnet')
+                irf = L(irf)
+
+            if self.dropout_rate:
+                L = tf.keras.layers.Dropout(
+                    self.dropout_rate,
+                    name='IRF_dropout_preresnet'
                 )
-                ran.append(_ran)
-                L = tf.keras.layers.Dense(
-                    self.n_units_irf,
-                    activation=None,
-                    kernel_regularizer=weight_regularizer,
-                    name='ran_embedding_layer_%s' % rangf
-                )
-                ran_embd.append(L(_ran))
+                irf = L(irf)
 
-            t_delta = (Y_time[..., None] - X_time)[..., None]
-
-            if self.filter_regularizer_scale:
-                # Conv1D with equal # filters and groups is a hack to apply trainable hadamard filter
-                filter = tf.keras.layers.Conv1D(
-                    n_pred,
-                    1,
-                    padding='same',
-                    groups=n_pred,
-                    use_bias=False,
-                    kernel_regularizer=filter_regularizer
-                )
-                _inputs = filter(inputs)
-
-            else:
-                _inputs = inputs
-
-            irf = tf.keras.layers.Concatenate()([_inputs, t_delta] + ran_embd)  # B x T x F
-
+        for _L in range(self.n_layers_irf):
+            _irf = irf
             if self.resnet:
+                n_inner = 2
+            else:
+                n_inner = 1
+            for __L in range(n_inner):
+                if __L == 0:
+                    activation = 'gelu'
+                else:
+                    activation = None
                 L = tf.keras.layers.Dense(
                     self.n_units_irf,
-                    activation=None,
+                    activation=activation,
                     kernel_regularizer=weight_regularizer,
-                    name='IRF_layer_preresnet'
+                    name='IRF_layer_%d.%d' % (_L + 1, __L + 1)
                 )
                 irf = L(irf)
 
                 if self.batch_normalize:
-                    L = tf.keras.layers.BatchNormalization(name='IRF_BN_preresnet')
+                    L = tf.keras.layers.BatchNormalization(name='IRF_BN_%d.%d' % (_L + 1, __L + 1))
                     irf = L(irf)
 
-                if self.layer_normalize:
-                    L = tf.keras.layers.LayerNormalization(name='IRF_LN_preresnet')
-                    irf = L(irf)
+            if self.resnet:
+                irf = tf.keras.layers.Add()([_irf, irf])
 
-                if self.dropout_rate:
-                    L = tf.keras.layers.Dropout(
-                        self.dropout_rate,
-                        name='IRF_dropout_preresnet'
-                    )
-                    irf = L(irf)
+            if self.layer_normalize:
+                L = tf.keras.layers.LayerNormalization(name='IRF_LN_%d' % (_L + 1))
+                irf = L(irf)
 
-            for _L in range(self.n_layers_irf):
-                _irf = irf
-                if self.resnet:
-                    n_inner = 2
-                else:
-                    n_inner = 1
-                for __L in range(n_inner):
-                    if __L == 0:
-                        activation = 'gelu'
-                    else:
-                        activation = None
-                    L = tf.keras.layers.Dense(
-                        self.n_units_irf,
-                        activation=activation,
-                        kernel_regularizer=weight_regularizer,
-                        name='IRF_layer_%d.%d' % (_L + 1, __L + 1)
-                    )
-                    irf = L(irf)
+            if self.dropout_rate:
+                L = tf.keras.layers.Dropout(
+                    self.dropout_rate,
+                    name='IRF_dropout_%d' % (_L + 1)
+                )
+                irf = L(irf)
 
-                    if self.batch_normalize:
-                        L = tf.keras.layers.BatchNormalization(name='IRF_BN_%d.%d' % (_L + 1, __L + 1))
-                        irf = L(irf)
+        irf_n_out = self.n_output
 
-                if self.resnet:
-                    irf = tf.keras.layers.Add()([_irf, irf])
+        L = tf.keras.layers.Dense(
+            irf_n_out,
+            activation=None,
+            kernel_regularizer=weight_regularizer,
+            name='IRF_layer_final'
+        )
 
-                if self.layer_normalize:
-                    L = tf.keras.layers.LayerNormalization(name='IRF_LN_%d' % (_L + 1))
-                    irf = L(irf)
+        outputs = L(irf)
+        L = tf.keras.layers.GlobalAveragePooling1D()
+        outputs = L(outputs, mask=input_mask)
 
-                if self.dropout_rate:
-                    L = tf.keras.layers.Dropout(
-                        self.dropout_rate,
-                        name='IRF_dropout_%d' % (_L + 1)
-                    )
-                    irf = L(irf)
+        inputs = [inputs, input_mask, X_time, Y_time, ran]
 
-            irf_n_out = self.n_output
+        model = tf.keras.models.Model(
+            inputs=inputs,
+            outputs=outputs
+        )
 
-            L = tf.keras.layers.Dense(
-                irf_n_out,
-                activation=None,
-                kernel_regularizer=weight_regularizer,
-                name='IRF_layer_final'
-            )
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=self.learning_rate,
+            amsgrad=True
+        )
 
-            outputs = L(irf)
-            L = tf.keras.layers.GlobalAveragePooling1D()
-            outputs = L(outputs, mask=input_mask)
+        metrics = [
+            tf.keras.metrics.MeanSquaredError(name='mse'),
+            tf.keras.metrics.CosineSimilarity(name='sim'),
+            # tfa.metrics.RSquare(name='R2')
+        ]
 
-            inputs = [inputs, input_mask, X_time, Y_time, ran]
+        model.compile(
+            optimizer=optimizer,
+            loss='mse',
+            metrics=metrics
+        )
 
-            model = tf.keras.models.Model(
-                inputs=inputs,
-                outputs=outputs
-            )
+        return model
 
-            optimizer = tf.keras.optimizers.Adam(
-                learning_rate=self.learning_rate,
-                amsgrad=True
-            )
-
-            metrics = [
-                tf.keras.metrics.MeanSquaredError(name='mse'),
-                tf.keras.metrics.CosineSimilarity(name='sim'),
-                # tfa.metrics.RSquare(name='R2')
-            ]
-
-            model.compile(
-                optimizer=optimizer,
-                loss='mse',
-                metrics=metrics
-            )
-
-            return model
-
-    def __call__(self, inputs):
-        return self.model(inputs)
+    def build(self):
+        if not self.built:
+            self.model = self.get_model()
 
     def fit(self, *args, **kwargs):
         if 'epochs' not in kwargs:
@@ -283,34 +287,40 @@ class CDRXL:
             m_path = os.path.join(m_dir, 'm.obj')
 
         if os.path.exists(m_path):
+            stderr('Loading saved model from %s...\n' % m_path)
             with open(m_path, 'rb') as f:
                 m_tmp = pickle.load(f)
-            self.model = m_tmp.model
-            self.__setstate__(m_tmp.__getstate__())
+            state = m_tmp.__getstate__()
+            for k in state:
+                setattr(self, k, state[k])
+            if path is not None:
+                self.outdir = path
+            self.build()
+            self.load_weights(path=path)
+        else:
+            stderr('No saved model to load. Keeping initialization.')
 
     def load_weights(self, path=None):
         if path is None:
             w_path = self.weights_path
         else:
-            m_dir = os.path.join(path, 'model')
-            w_path = os.path.join(m_dir, 'm.hdf5')
+            w_path = os.path.join(path, 'model', 'm.hdf5')
 
         if os.path.exists(w_path):
             stderr('Loading saved weights...\n')
             m_tmp = tf.keras.models.load_model(w_path)
-            self.model.set_weights(m_tmp.get_weights())
-            # Use fake gradient to let optimizer initialize weights before swapping them.
-            # Ripped from https://github.com/keras-team/keras/issues/15298.
-            grad_vars = self.model.trainable_weights
-            zero_grads = [tf.zeros_like(w) for w in grad_vars]
-            self.model.optimizer.apply_gradients(zip(zero_grads, grad_vars))
-            self.model.optimizer.set_weights(m_tmp.optimizer.get_weights())
-            # for attr in self.MUTABLE_ATTRIBUTES:
-            #     setattr(self, attr, getattr(m_tmp, attr))
-            if path is not None:
-                self.outdir = path
+            self.copy_weights(m_tmp)
         else:
             stderr('No checkpoint to load. Keeping initialization...\n')
+
+    def copy_weights(self, keras_model):
+        # Use fake gradient to let optimizer initialize weights before swapping them.
+        # Ripped from https://github.com/keras-team/keras/issues/15298.
+        grad_vars = self.model.trainable_weights
+        zero_grads = [tf.zeros_like(w) for w in grad_vars]
+        self.model.set_weights(keras_model.get_weights())
+        self.model.optimizer.apply_gradients(zip(zero_grads, grad_vars))
+        self.model.optimizer.set_weights(keras_model.optimizer.get_weights())
 
     def set_epoch(self, epoch):
         self.epoch = epoch
