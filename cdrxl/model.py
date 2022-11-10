@@ -128,15 +128,21 @@ class CDRXL:
 
         if self.filter_regularizer_scale:
             # Conv1D with equal # filters and groups is a hack to apply trainable hadamard filter
-            filter = tf.keras.layers.Conv1D(
+            filter_in = tf.keras.backend.ones_like(t_delta)
+            filter = tf.keras.layers.Dense(
                 n_pred,
-                1,
-                padding='same',
-                groups=n_pred,
                 use_bias=False,
-                kernel_regularizer=filter_regularizer
-            )
-            _inputs = filter(inputs)
+                kernel_regularizer=filter_regularizer,
+                name='filter_main'
+            )(filter_in)
+            for i, _ran in enumerate(ran):
+                filter += tf.keras.layers.Dense(
+                    n_pred,
+                    use_bias=False,
+                    kernel_regularizer=filter_regularizer,
+                    name='filter_by_%s' % self.rangf[i]
+                )(_ran)
+            _inputs = inputs * filter
 
         else:
             _inputs = inputs
@@ -279,7 +285,7 @@ class CDRXL:
 
         self.model.save(w_path)
 
-    def load(self, path=None):
+    def load(self, path=None, keep_metadata=True):
         if path is None:
             m_path = self.model_path
         else:
@@ -291,7 +297,7 @@ class CDRXL:
             with open(m_path, 'rb') as f:
                 m_tmp = pickle.load(f)
             state = m_tmp.__getstate__()
-            for k in state:
+            for k in self.MUTABLE_ATTRIBUTES:
                 setattr(self, k, state[k])
             if path is not None:
                 self.outdir = path

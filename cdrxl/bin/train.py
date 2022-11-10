@@ -25,7 +25,10 @@ if __name__ == '__main__':
             if not ans:
                 ans = 'n'
         if ans == 'y':
+            stderr('Deleting previously saved model (%s)\n' % C.outdir)
             shutil.rmtree(C.outdir)
+        else:
+            stderr('Hard restart canceled. Loading saved model (%s).\n')
 
     if not os.path.exists(C.outdir):
         os.makedirs(C.outdir)
