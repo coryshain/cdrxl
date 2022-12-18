@@ -10,6 +10,7 @@ class Config:
         'outdir': 'cdrxl_model',
         'n_backward': 32,
         'n_forward': 0,
+        'recurrent': False,
         'n_units_irf': 128,
         'n_layers_irf': 1,
         'batch_normalize': False,
@@ -44,6 +45,7 @@ class Config:
         self.outdir = config.get('outdir', Config.CDRXL_KWARGS['outdir'])
         self.n_backward = config.get('n_backward', Config.CDRXL_KWARGS['n_backward'])
         self.n_forward = config.get('n_forward', Config.CDRXL_KWARGS['n_forward'])
+        self.recurrent = config.get('recurrent', Config.CDRXL_KWARGS['recurrent'])
         self.n_units_irf = config.get('n_units_irf', Config.CDRXL_KWARGS['n_units_irf'])
         self.n_layers_irf = config.get('n_layers_irf', Config.CDRXL_KWARGS['n_layers_irf'])
         self.batch_normalize = config.get('batch_normalize', Config.CDRXL_KWARGS['batch_normalize'])

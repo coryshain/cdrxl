@@ -147,7 +147,7 @@ class CDRXL:
         else:
             _inputs = inputs
 
-        irf = tf.keras.layers.Concatenate()([_inputs, t_delta] + ran_embd)  # B x T x F
+        irf = tf.keras.layers.Concatenate()([_inputs, X_time[..., None], t_delta] + ran_embd)  # B x T x F
 
         if self.resnet:
             L = tf.keras.layers.Dense(
@@ -159,11 +159,19 @@ class CDRXL:
             irf = L(irf)
 
             if self.batch_normalize:
-                L = tf.keras.layers.BatchNormalization(name='IRF_BN_preresnet')
+                L = tf.keras.layers.BatchNormalization(
+                    center=False,
+                    scale=False,
+                    name='IRF_BN_preresnet'
+                )
                 irf = L(irf)
 
             if self.layer_normalize:
-                L = tf.keras.layers.LayerNormalization(name='IRF_LN_preresnet')
+                L = tf.keras.layers.LayerNormalization(
+                    center=False,
+                    scale=False,
+                    name='IRF_LN_preresnet'
+                )
                 irf = L(irf)
 
             if self.dropout_rate:
@@ -184,24 +192,48 @@ class CDRXL:
                     activation = 'gelu'
                 else:
                     activation = None
-                L = tf.keras.layers.Dense(
-                    self.n_units_irf,
-                    activation=activation,
-                    kernel_regularizer=weight_regularizer,
-                    name='IRF_layer_%d.%d' % (_L + 1, __L + 1)
-                )
+                if self.recurrent:
+                        L = tf.keras.layers.GRU(
+                        self.n_units_irf,
+                        kernel_regularizer=weight_regularizer,
+                        recurrent_regularizer=weight_regularizer,
+                        return_sequences=True,
+                        name='IRF_layer_%d.%d' % (_L + 1, __L + 1)
+                    )
+                else:
+                    L = tf.keras.layers.Dense(
+                        self.n_units_irf,
+                        activation=activation,
+                        kernel_regularizer=weight_regularizer,
+                        name='IRF_layer_%d.%d' % (_L + 1, __L + 1)
+                    )
                 irf = L(irf)
 
+                if not self.resnet or __L < n_inner - 1:
+                    # Don't rescale, inner layer, scaling handled by next Dense layer
+                    scale = False
+                else:
+                    # Do rescale, residual, scaling needed
+                    scale = True
                 if self.batch_normalize:
-                    L = tf.keras.layers.BatchNormalization(name='IRF_BN_%d.%d' % (_L + 1, __L + 1))
+                    L = tf.keras.layers.BatchNormalization(
+                        center=False,
+                        scale=scale,
+                        gamma_regularizer=weight_regularizer,
+                        name='IRF_BN_%d.%d' % (_L + 1, __L + 1)
+                    )
+                    irf = L(irf)
+                if self.layer_normalize:
+                    L = tf.keras.layers.LayerNormalization(
+                        center=False,
+                        scale=scale,
+                        gamma_regularizer=weight_regularizer,
+                        name='IRF_LN_%d.%d' % (_L + 1, __L + 1)
+                    )
                     irf = L(irf)
 
             if self.resnet:
                 irf = tf.keras.layers.Add()([_irf, irf])
-
-            if self.layer_normalize:
-                L = tf.keras.layers.LayerNormalization(name='IRF_LN_%d' % (_L + 1))
-                irf = L(irf)
 
             if self.dropout_rate:
                 L = tf.keras.layers.Dropout(
@@ -215,13 +247,13 @@ class CDRXL:
         L = tf.keras.layers.Dense(
             irf_n_out,
             activation=None,
-            kernel_regularizer=weight_regularizer,
+            # kernel_regularizer=weight_regularizer,
             name='IRF_layer_final'
         )
 
         outputs = L(irf)
         L = tf.keras.layers.GlobalAveragePooling1D()
-        outputs = L(outputs, mask=input_mask)
+        outputs = L(outputs * input_mask[..., None])
 
         inputs = [inputs, input_mask, X_time, Y_time, ran]
 
