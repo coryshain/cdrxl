@@ -27,7 +27,9 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
             X_mean=None,
             X_sd=None,
             X_time_mean=None,
-            X_time_sd=None
+            X_time_sd=None,
+            Y_mean=None,
+            Y_sd=None
     ):
         self.series_ids = list(series_ids) if series_ids else []
         self.rangf = list(rangf) if rangf else []
@@ -96,6 +98,14 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
             self.X_sd = self.X.values.std(axis=0)
         else:
             self.X_sd = X_sd
+        if Y_mean is None:
+            self.Y_mean = self.Y.values.mean(axis=0)
+        else:
+            self.Y_mean = Y_mean
+        if Y_sd is None:
+            self.Y_sd = self.Y.values.std(axis=0)
+        else:
+            self.Y_sd = Y_sd
         if X_time_mean is None:
             self.X_time_mean = self.X_time.time.values.mean()
         else:
@@ -178,6 +188,10 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
     @property
     def mean_var(self):
         return np.square(np.std(self.Y.values, axis=0)).mean()
+
+    @property
+    def mae(self):
+        return np.mean(np.abs(self.Y.values - self.Y.values.mean(axis=0, keepdims=True))).mean()
 
     @property
     def rangf_n_levels(self):

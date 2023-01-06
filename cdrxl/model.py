@@ -7,6 +7,7 @@ import tensorflow as tf
 from cdrxl.util import stderr
 from cdrxl.config import Config
 
+
 class CDRXL:
     KWARG_ATTRIBUTES = [x for x in Config.CDRXL_KWARGS]
     FIXED_ATTRIBUTES = [
@@ -18,7 +19,9 @@ class CDRXL:
             'X_mean',
             'X_sd',
             'X_time_mean',
-            'X_time_sd'
+            'X_time_sd',
+            'Y_mean',
+            'Y_sd'
         ]
     MUTABLE_ATTRIBUTES = [
         'epoch'
@@ -43,6 +46,8 @@ class CDRXL:
         self.X_sd = cdrxl_dataset.X_sd
         self.X_time_mean = cdrxl_dataset.X_time_mean
         self.X_time_sd = cdrxl_dataset.X_time_sd
+        self.Y_mean = cdrxl_dataset.Y_mean
+        self.Y_sd = cdrxl_dataset.Y_sd
         self.epoch = 0
 
         self.built = False
@@ -149,7 +154,7 @@ class CDRXL:
 
         irf = tf.keras.layers.Concatenate()([_inputs, X_time[..., None], t_delta] + ran_embd)  # B x T x F
 
-        if self.resnet:
+        if self.resnet and (self.n_pred + 2 != self.n_output):
             L = tf.keras.layers.Dense(
                 self.n_units_irf,
                 activation=None,
@@ -247,11 +252,18 @@ class CDRXL:
         L = tf.keras.layers.Dense(
             irf_n_out,
             activation=None,
-            # kernel_regularizer=weight_regularizer,
+            kernel_regularizer=weight_regularizer,
             name='IRF_layer_final'
         )
 
+        # Initialize the layer so that we can set its bias to the training mean
+        input_shape = tf.TensorShape((None, None, irf.shape[-1]))
+        L.build(input_shape)
+        weights = L.get_weights()
+        weights[1] = self.Y_mean
+        L.set_weights(weights)
         outputs = L(irf)
+
         L = tf.keras.layers.GlobalAveragePooling1D()
         outputs = L(outputs * input_mask[..., None])
 
@@ -262,20 +274,25 @@ class CDRXL:
             outputs=outputs
         )
 
-        optimizer = tf.keras.optimizers.Adam(
-            learning_rate=self.learning_rate,
-            amsgrad=True
+        # optimizer = tf.keras.optimizers.Adam(
+        #     learning_rate=self.learning_rate,
+        #     amsgrad=True,
+        #     decay=self.learning_rate_decay
+        # )
+        optimizer = tf.keras.optimizers.Adadelta(
+            learning_rate=1
         )
 
         metrics = [
             tf.keras.metrics.MeanSquaredError(name='mse'),
             tf.keras.metrics.CosineSimilarity(name='sim'),
-            # tfa.metrics.RSquare(name='R2')
         ]
 
         model.compile(
             optimizer=optimizer,
             loss='mse',
+            # loss='mae',
+            # loss=tf.keras.losses.CosineSimilarity(axis=1),
             metrics=metrics
         )
 
@@ -336,10 +353,10 @@ class CDRXL:
             self.build()
             self.load_weights(path=path)
         elif not self.built:
-            stderr('No saved model to load. Initializing new model.')
+            stderr('No saved model to load. Initializing new model.\n')
             self.build()
         else:
-            stderr('No saved model to load. Keeping current weights.')
+            stderr('No saved model to load. Keeping current weights.\n')
 
     def load_weights(self, path=None):
         if path is None:

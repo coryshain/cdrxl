@@ -73,14 +73,18 @@ if __name__ == '__main__':
             X_sd=m.X_sd,
             X_time_mean=m.X_time_mean,
             X_time_sd=m.X_time_sd,
+            Y_mean=m.Y_mean,
+            Y_sd=m.Y_sd,
         )
     else:
         D_dev = None
 
     stderr('Training Set Size:     %d\n' % D_train.n)
+    stderr('Training Set MAE:      %.02f\n' % D_train.mae)
     stderr('Training Set Variance: %.02f\n' % D_train.mean_var)
     if D_dev is not None:
         stderr('Dev Set Size:          %d\n' % D_dev.n)
+        stderr('Dev Set MAE:           %.02f\n' % D_dev.mae)
         stderr('Dev Set Variance:      %.02f\n' % D_dev.mean_var)
 
     stderr('Fitting model...\n')

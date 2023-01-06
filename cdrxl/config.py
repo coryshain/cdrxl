@@ -16,10 +16,11 @@ class Config:
         'batch_normalize': False,
         'layer_normalize': False,
         'resnet': False,
-        'dropout_rate': 0,
-        'regularizer_scale': 0,
-        'filter_regularizer_scale': 0,
+        'dropout_rate': 0.,
+        'regularizer_scale': 0.,
+        'filter_regularizer_scale': 0.,
         'learning_rate': 0.001,
+        'learning_rate_decay': 0.,
         'batch_size': 256,
         'n_iter': 10000,
         'rescale_inputs': True,
@@ -55,6 +56,7 @@ class Config:
         self.regularizer_scale = config.get('regularizer_scale', Config.CDRXL_KWARGS['regularizer_scale'])
         self.filter_regularizer_scale = config.get('filter_regularizer_scale', Config.CDRXL_KWARGS['filter_regularizer_scale'])
         self.learning_rate = config.get('learning_rate', Config.CDRXL_KWARGS['learning_rate'])
+        self.learning_rate_decay = config.get('learning_rate_decay', Config.CDRXL_KWARGS['learning_rate_decay'])
         self.batch_size = config.get('batch_size', Config.CDRXL_KWARGS['batch_size'])
         self.n_iter = config.get('n_iter', Config.CDRXL_KWARGS['n_iter'])
         self.rescale_inputs = config.get('rescale_inputs', Config.CDRXL_KWARGS['rescale_inputs'])
