@@ -13,6 +13,9 @@ class Config:
         'recurrent': False,
         'n_units_irf': 128,
         'n_layers_irf': 1,
+        'direct_irf': False,
+        'input_dependent_irf': False,
+        'nonstationary': False,
         'batch_normalize': False,
         'layer_normalize': False,
         'resnet': False,
@@ -24,6 +27,7 @@ class Config:
         'batch_size': 256,
         'n_iter': 10000,
         'rescale_inputs': True,
+        'sep': None,
     }
 
     def __init__(self, path):
@@ -49,6 +53,9 @@ class Config:
         self.recurrent = config.get('recurrent', Config.CDRXL_KWARGS['recurrent'])
         self.n_units_irf = config.get('n_units_irf', Config.CDRXL_KWARGS['n_units_irf'])
         self.n_layers_irf = config.get('n_layers_irf', Config.CDRXL_KWARGS['n_layers_irf'])
+        self.direct_irf = config.get('direct_irf', Config.CDRXL_KWARGS['direct_irf'])
+        self.input_dependent_irf = config.get('input_dependent_irf', Config.CDRXL_KWARGS['input_dependent_irf'])
+        self.nonstationary = config.get('nonstationary', Config.CDRXL_KWARGS['nonstationary'])
         self.batch_normalize = config.get('batch_normalize', Config.CDRXL_KWARGS['batch_normalize'])
         self.layer_normalize = config.get('layer_normalize', Config.CDRXL_KWARGS['layer_normalize'])
         self.resnet = config.get('resnet', Config.CDRXL_KWARGS['resnet'])
@@ -60,3 +67,4 @@ class Config:
         self.batch_size = config.get('batch_size', Config.CDRXL_KWARGS['batch_size'])
         self.n_iter = config.get('n_iter', Config.CDRXL_KWARGS['n_iter'])
         self.rescale_inputs = config.get('rescale_inputs', Config.CDRXL_KWARGS['rescale_inputs'])
+        self.sep = config.get('sep', Config.CDRXL_KWARGS['sep'])

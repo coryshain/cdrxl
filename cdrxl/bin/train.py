@@ -45,6 +45,7 @@ if __name__ == '__main__':
         n_backward=C.n_backward,
         n_forward=C.n_forward,
         batch_size=C.batch_size,
+        sep=C.sep,
         shuffle=True,
     )
 

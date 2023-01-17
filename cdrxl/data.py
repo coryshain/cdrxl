@@ -168,9 +168,6 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
             _ran = np.tile(tf.expand_dims(_ran, axis=-2), [1, self.n_backward + self.n_forward, 1])
             ran.append(_ran)
 
-        X_temp = X_time[..., None]
-        X = np.concatenate([X, X_temp], axis=-1)
-
         return (X, X_mask, X_time, Y_time, ran), Y
 
     @property
@@ -179,7 +176,7 @@ class CDRXLDataSet(tf.keras.utils.Sequence):
 
     @property
     def n_pred(self):
-        return len(self.predictor_columns) + 1
+        return len(self.predictor_columns)
 
     @property
     def n_output(self):
@@ -260,10 +257,11 @@ def load_data(
         Y_path=None,
         predictor_columns=None,
         response_columns=None,
+        sep=None,
         **kwargs
 ):
-    X = pd.read_csv(X_path)
-    Y = pd.read_csv(Y_path)
+    X = pd.read_csv(X_path, sep=sep)
+    Y = pd.read_csv(Y_path, sep=sep)
 
     if predictor_columns is not None:
         _predictor_columns = []

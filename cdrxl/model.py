@@ -8,6 +8,34 @@ from cdrxl.util import stderr
 from cdrxl.config import Config
 
 
+@tf.keras.utils.register_keras_serializable()
+class Bias(tf.keras.layers.Layer):
+    def __init__(
+            self,
+            initial_value=None
+    ):
+        super().__init__()
+        self.initial_value = initial_value
+
+    def build(self, input_shape):
+        self.units = input_shape[-1]
+        if self.initial_value is None:
+            initializer = 'zeros'
+        else:
+            initializer = tf.keras.initializers.Constant(self.initial_value)
+        self.b = self.add_weight(
+            shape=(self.units,),
+            initializer=initializer,
+            trainable=True
+        )
+
+    def call(self, inputs):
+        return tf.nn.bias_add(inputs, self.b)
+
+    def get_config(self):
+        return {'initial_value': self.initial_value}
+
+
 class CDRXL:
     KWARG_ATTRIBUTES = [x for x in Config.CDRXL_KWARGS]
     FIXED_ATTRIBUTES = [
@@ -88,7 +116,8 @@ class CDRXL:
     def get_model(self):
         n_pred = self.n_pred
         if self.regularizer_scale:
-            weight_regularizer = tf.keras.regularizers.L2(self.regularizer_scale)
+            # weight_regularizer = tf.keras.regularizers.L2(self.regularizer_scale)
+            weight_regularizer = tf.keras.regularizers.L1L2(l1=self.regularizer_scale, l2=self.regularizer_scale)
         else:
             weight_regularizer = None
         if self.filter_regularizer_scale:
@@ -152,7 +181,13 @@ class CDRXL:
         else:
             _inputs = inputs
 
-        irf = tf.keras.layers.Concatenate()([_inputs, X_time[..., None], t_delta] + ran_embd)  # B x T x F
+        irf_in = [t_delta]
+        if self.input_dependent_irf:
+            irf_in.append(_inputs)
+        if self.nonstationary:
+            irf_in.append(X_time[..., None])
+        irf_in += ran_embd
+        irf = tf.keras.layers.Concatenate()(irf_in)  # B x T x F
 
         if self.resnet and (self.n_pred + 2 != self.n_output):
             L = tf.keras.layers.Dense(
@@ -247,25 +282,34 @@ class CDRXL:
                 )
                 irf = L(irf)
 
-        irf_n_out = self.n_output
+        if self.direct_irf:
+            irf_n_out = self.n_output
+        else:
+            irf_n_out = (self.n_pred + 1) * self.n_output
 
         L = tf.keras.layers.Dense(
             irf_n_out,
             activation=None,
             kernel_regularizer=weight_regularizer,
+            use_bias=False,
             name='IRF_layer_final'
         )
+        irf = L(irf)
 
-        # Initialize the layer so that we can set its bias to the training mean
-        input_shape = tf.TensorShape((None, None, irf.shape[-1]))
-        L.build(input_shape)
-        weights = L.get_weights()
-        weights[1] = self.Y_mean
-        L.set_weights(weights)
-        outputs = L(irf)
+        if self.direct_irf:
+            outputs = outputs * input_mask[..., None]
+            outputs = tf.reduce_sum(outputs, axis=1) / (self.n_backward + self.n_forward)
+        else:
+            L = tf.keras.layers.Reshape([(self.n_backward + self.n_forward), self.n_pred + 1, self.n_output])
+            irf = L(irf)
+            L = tf.keras.layers.Multiply()
+            _inputs = tf.keras.layers.Concatenate()([tf.ones_like(t_delta), _inputs])[..., None]
+            outputs = L([_inputs, irf])
+            outputs = outputs * input_mask[..., None, None]
+            outputs = tf.reduce_sum(outputs, axis=[1,2]) / ((self.n_backward + self.n_forward) * (self.n_pred + 1))
 
-        L = tf.keras.layers.GlobalAveragePooling1D()
-        outputs = L(outputs * input_mask[..., None])
+        L = Bias(initial_value=self.Y_mean)
+        outputs = L(outputs)
 
         inputs = [inputs, input_mask, X_time, Y_time, ran]
 
@@ -274,14 +318,14 @@ class CDRXL:
             outputs=outputs
         )
 
-        # optimizer = tf.keras.optimizers.Adam(
-        #     learning_rate=self.learning_rate,
-        #     amsgrad=True,
-        #     decay=self.learning_rate_decay
-        # )
-        optimizer = tf.keras.optimizers.Adadelta(
-            learning_rate=1
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=self.learning_rate,
+            amsgrad=True,
+            decay=self.learning_rate_decay
         )
+        # optimizer = tf.keras.optimizers.Adadelta(
+        #     learning_rate=1
+        # )
 
         metrics = [
             tf.keras.metrics.MeanSquaredError(name='mse'),
