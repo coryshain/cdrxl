@@ -187,7 +187,10 @@ class CDRXL:
         if self.nonstationary:
             irf_in.append(X_time[..., None])
         irf_in += ran_embd
-        irf = tf.keras.layers.Concatenate()(irf_in)  # B x T x F
+        if len(irf_in) == 1:
+            irf = irf_in[0]
+        else:
+            irf = tf.keras.layers.Concatenate()(irf_in)  # B x T x F
 
         if self.resnet and (self.n_pred + 2 != self.n_output):
             L = tf.keras.layers.Dense(

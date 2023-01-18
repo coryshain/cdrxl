@@ -1,3 +1,4 @@
+import os
 import re
 import math
 import numpy as np
@@ -260,6 +261,8 @@ def load_data(
         sep=None,
         **kwargs
 ):
+    X_path = os.path.normpath(X_path)
+    Y_path = os.path.normpath(Y_path)
     X = pd.read_csv(X_path, sep=sep)
     Y = pd.read_csv(Y_path, sep=sep)
 
